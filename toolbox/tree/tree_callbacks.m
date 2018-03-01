@@ -236,7 +236,11 @@ switch (lower(action))
             % ===== DATA =====
             % View data file (MEG and EEG)
             case {'data', 'pdata', 'rawdata'}
-                view_timeseries(filenameRelative);
+                if ~isempty(strfind(filenameRelative, '_0ephys_'))
+                    bst_process('CallProcess', 'process_spikesorting_supervised', filenameRelative, []);
+                else
+                    view_timeseries(filenameRelative);
+                end
 
             % ===== DATA/MATRIX LIST =====
             % Expand node
@@ -2079,7 +2083,7 @@ switch (lower(action))
                 RawFile = [];
             end
             % Raw file menus
-            if ~isempty(RawFile)
+            if ~isempty(RawFile) && isempty(strfind(RawFile, '_0ephys_'))
                 % Files that are not saved in the database
                 if isempty(dir(bst_fullfile(bst_fileparts(file_fullpath(RawFile)), '*.bst')))
                     if ~bst_get('ReadOnly')
