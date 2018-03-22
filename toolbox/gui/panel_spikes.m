@@ -72,7 +72,7 @@ function bstPanelNew = CreatePanel() %#ok<DEFNU>
 %  === INTERNAL PANEL CALLBACKS  ===================================================
 %  =================================================================================
 %% ===== LIST SELECTION CHANGED CALLBACK =====
-    function ElectrodesListValueChanged_Callback(h, ev)
+    function ElectrodesListValueChanged_Callback(varargin)
         global GlobalData;
         % Get selected item in the combo box
         jItem = jComboElectrodes.getSelectedItem();
@@ -83,7 +83,7 @@ function bstPanelNew = CreatePanel() %#ok<DEFNU>
         GlobalData.SpikeSorting.Selected = jItem.getUserData();
         process_spikesorting_supervised('LoadElectrode');
     end
-    function ButtonSaveAndNextElectrode(h, ev)
+    function ButtonSaveAndNextElectrode(varargin)
         global GlobalData;
         
         % Save current electrode
@@ -150,7 +150,9 @@ function UpdateElectrodesList(varargin)
                 iList = iList + 1;
             end
         end
-        jComboElectrodes.setSelectedIndex(GlobalData.SpikeSorting.Data.Spikes(GlobalData.SpikeSorting.Selected).ItemList);
+        if GlobalData.SpikeSorting.Selected > 0
+            jComboElectrodes.setSelectedIndex(GlobalData.SpikeSorting.Data.Spikes(GlobalData.SpikeSorting.Selected).ItemList);
+        end
     else
         jComboElectrodes.setEnabled(0);
     end
