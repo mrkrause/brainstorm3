@@ -223,7 +223,7 @@ function OutputFiles = Run(sProcess, sInputs) %#ok<DEFNU>
             iChannel  = sscanf(spikes{iSpike}, 'raw_elec%d_spikes.mat');
             DataMat.Spikes(iSpike).Path = outputPath;
             DataMat.Spikes(iSpike).File = ['times_raw_elec' num2str(iChannel) '.mat'];
-            if exist(DataMat.Spikes(iSpike).File, 'file') ~= 2
+            if exist(bst_fullfile(outputPath, DataMat.Spikes(iSpike).File), 'file') ~= 2
                 DataMat.Spikes(iSpike).File = '';
             end
             DataMat.Spikes(iSpike).Name = ChannelMat.Channel(iChannel).Name;
