@@ -1,5 +1,5 @@
-function varargout = process_spikesorting_unsupervised( varargin )
-% PROCESS_SPIKESORTING_UNSUPERVISED:
+function varargout = process_spikesorting_waveclus( varargin )
+% PROCESS_SPIKESORTING_WAVECLUS:
 % This process separates the initial raw signal to nChannels binary signals
 % and performs spike sorting individually on each channel with the WaveClus
 % spike-sorter. The spikes are clustered and assigned to individual
@@ -8,7 +8,7 @@ function varargout = process_spikesorting_unsupervised( varargin )
 % When all spikes on all electrodes have been clustered, all the spikes for
 % each neuron is assigned to an events file in brainstorm format.
 %
-% USAGE: OutputFiles = process_spikesorting_unsupervised('Run', sProcess, sInputs)
+% USAGE: OutputFiles = process_spikesorting_waveclus('Run', sProcess, sInputs)
 
 % @=============================================================================
 % This function is part of the Brainstorm software:
@@ -37,7 +37,7 @@ end
 %% ===== GET DESCRIPTION =====
 function sProcess = GetDescription() %#ok<DEFNU>
     % Description the process
-    sProcess.Comment     = 'Unsupervised spike sorting';
+    sProcess.Comment     = 'WaveClus unsupervised spike sorting';
     sProcess.Category    = 'Custom';
     sProcess.SubGroup    = 'Electrophysiology';
     sProcess.Index       = 1201;
@@ -48,6 +48,7 @@ function sProcess = GetDescription() %#ok<DEFNU>
     sProcess.nInputs     = 1;
     sProcess.nMinFiles   = 1;
     sProcess.isSeparator = 0;
+    sProcess.options.spikesorter = 'waveclus';
     sProcess.options.binsize.Comment = 'Maximum RAM to use: ';
     sProcess.options.binsize.Type    = 'value';
     sProcess.options.binsize.Value   = {2, 'GB', 1};
@@ -60,12 +61,6 @@ function sProcess = GetDescription() %#ok<DEFNU>
     % Channel name comment
     sProcess.options.make_plotshelp.Comment = '<I><FONT color="#777777">This saves images of the clustered spikes</FONT></I>';
     sProcess.options.make_plotshelp.Type    = 'label';
-    % === Spike Sorter
-    sProcess.options.label1.Comment = '<U><B>Spike Sorter</B></U>:';
-    sProcess.options.label1.Type    = 'label';
-    sProcess.options.spikesorter.Comment = {'WaveClus'};
-    sProcess.options.spikesorter.Type    = 'radio';
-    sProcess.options.spikesorter.Value   = 1;
     % Options: Options
     sProcess.options.edit.Comment = {'panel_spikesorting_options', '<U><B>Options</B></U>: '};
     sProcess.options.edit.Type    = 'editpref';
@@ -83,36 +78,29 @@ end
 function OutputFiles = Run(sProcess, sInputs) %#ok<DEFNU>
     OutputFiles = {};
     ProtocolInfo = bst_get('ProtocolInfo');
-    spikeSorter = sProcess.options.spikesorter.Comment{sProcess.options.spikesorter.Value};
     
     if sProcess.options.binsize.Value{1} <= 0
         bst_report('Error', sProcess, sInputs, 'Invalid maximum amount of RAM specified.');
         return
     end
     
-    switch lower(spikeSorter)
-        case 'waveclus'
-            % Ensure we are including the WaveClus folder in the Matlab path
-            waveclusDir = bst_fullfile(bst_get('BrainstormUserDir'), 'waveclus');
-            if exist(waveclusDir, 'file')
-                addpath(genpath(waveclusDir));
-            end
+    % Ensure we are including the WaveClus folder in the Matlab path
+    waveclusDir = bst_fullfile(bst_get('BrainstormUserDir'), 'waveclus');
+    if exist(waveclusDir, 'file')
+        addpath(genpath(waveclusDir));
+    end
 
-            % Install WaveClus if missing
-            if ~exist('wave_clus_font', 'file')
-                rmpath(genpath(waveclusDir));
-                isOk = java_dialog('confirm', ...
-                    ['The WaveClus spike-sorter is not installed on your computer.' 10 10 ...
-                         'Download and install the latest version?'], 'WaveClus');
-                if ~isOk
-                    bst_report('Error', sProcess, sInputs, 'This process requires the WaveClus spike-sorter.');
-                    return;
-                end
-                downloadAndInstallWaveClus();
-            end
-            
-        otherwise
-            bst_error('The chosen spike sorter is currently unsupported by Brainstorm.');
+    % Install WaveClus if missing
+    if ~exist('wave_clus_font', 'file')
+        rmpath(genpath(waveclusDir));
+        isOk = java_dialog('confirm', ...
+            ['The WaveClus spike-sorter is not installed on your computer.' 10 10 ...
+                 'Download and install the latest version?'], 'WaveClus');
+        if ~isOk
+            bst_report('Error', sProcess, sInputs, 'This process requires the WaveClus spike-sorter.');
+            return;
+        end
+        downloadAndInstallWaveClus();
     end
     
     % Compute on each raw input independently
@@ -211,7 +199,7 @@ function OutputFiles = Run(sProcess, sInputs) %#ok<DEFNU>
         DataMat = struct();
         DataMat.Comment     = ['Spike Sorting' commentSuffix];
         DataMat.DataType    = 'raw';%'ephys';
-        DataMat.Device      = lower(spikeSorter);
+        DataMat.Device      = 'waveclus';
         DataMat.Name        = NewBstFile;
         DataMat.Parent      = outputPath;
         DataMat.RawFile     = sInputs(i).FileName;
@@ -301,79 +289,6 @@ function downloadAndInstallWaveClus()
     addpath(genpath(waveclusDir));
 end
 
-
-function newEvents = CreateSpikeEvents(rawFile, deviceType, electrodeFile, electrodeName, import, eventNamePrefix)
-    if nargin < 6
-        eventNamePrefix = '';
-    else
-        eventNamePrefix = [eventNamePrefix ' '];
-    end
-    newEvents = struct();
-    DataMat = in_bst_data(rawFile);
-    eventName = [eventNamePrefix GetSpikesEventPrefix() ' ' electrodeName ' '];
-
-    % Load spike data and convert to Brainstorm event format
-    switch lower(deviceType)
-        case 'waveclus'
-            if exist(electrodeFile, 'file') == 2
-                ElecData = load(electrodeFile, 'cluster_class');
-                neurons = unique(ElecData.cluster_class(ElecData.cluster_class(:,1) > 0,1));
-                numNeurons = length(neurons);
-            else
-                numNeurons = 0;
-            end
-
-            if numNeurons == 1
-                newEvents(1).label      = eventName;
-                newEvents(1).color      = [rand(1,1), rand(1,1), rand(1,1)];
-                newEvents(1).epochs     = ones(1, sum(ElecData.cluster_class(:,1) ~= 0));
-                newEvents(1).times      = ElecData.cluster_class(ElecData.cluster_class(:,1) ~= 0, 2)' ./ 1000;
-                newEvents(1).samples    = newEvents(1).times .* DataMat.F.prop.sfreq;
-                newEvents(1).reactTimes = [];
-                newEvents(1).select     = 1;
-            elseif numNeurons > 1
-                for iNeuron = 1:numNeurons
-                    newEvents(iNeuron).label      = [eventName '|' num2str(iNeuron) '|'];
-                    newEvents(iNeuron).color      = [rand(1,1), rand(1,1), rand(1,1)];
-                    newEvents(iNeuron).epochs     = ones(1, length(ElecData.cluster_class(ElecData.cluster_class(:,1) == iNeuron, 1)));
-                    newEvents(iNeuron).times      = ElecData.cluster_class(ElecData.cluster_class(:,1) == iNeuron, 2)' ./ 1000;
-                    newEvents(iNeuron).samples    = newEvents(iNeuron).times .* DataMat.F.prop.sfreq;
-                    newEvents(iNeuron).reactTimes = [];
-                    newEvents(iNeuron).select     = 1;
-                end
-            else
-                % This electrode just picked up noise, no event to add.
-                newEvents(1).label      = eventName;
-                newEvents(1).color      = [rand(1,1), rand(1,1), rand(1,1)];
-                newEvents(1).epochs     = [];
-                newEvents(1).times      = [];
-                newEvents(1).samples    = [];
-                newEvents(1).reactTimes = [];
-                newEvents(1).select     = 1;
-            end
-            
-        otherwise
-            bst_error('This spike sorting structure is currently unsupported by Brainstorm.');
-    end
-    
-    if import
-        ProtocolInfo = bst_get('ProtocolInfo');
-        % Add event to linked raw file
-        numEvents = length(DataMat.F.events);
-        % Delete existing event(s)
-        if numEvents > 0
-            iDelEvents = cellfun(@(x) ~isempty(x), strfind({DataMat.F.events.label}, eventName));
-            DataMat.F.events = DataMat.F.events(~iDelEvents);
-            numEvents = length(DataMat.F.events);
-        end
-        % Add as new event(s);
-        for iEvent = 1:length(newEvents)
-            DataMat.F.events(numEvents + iEvent) = newEvents(iEvent);
-        end
-        bst_save(bst_fullfile(ProtocolInfo.STUDIES, rawFile), DataMat, 'v6');
-    end
-end
-
 function SaveBrainstormEvents(sFile, outputFile, eventNamePrefix)
     if nargin < 3
         eventNamePrefix = '';
@@ -384,7 +299,9 @@ function SaveBrainstormEvents(sFile, outputFile, eventNamePrefix)
     events = struct();
     
     for iElectrode = 1:numElectrodes
-        newEvents = CreateSpikeEvents(sFile.RawFile, ...
+        newEvents = process_spikesorting_supervised(...
+            'CreateSpikeEvents', ...
+           sFile.RawFile, ...
             sFile.Device, ...
             bst_fullfile(sFile.Parent, sFile.Spikes(iElectrode).File), ...
             sFile.Spikes(iElectrode).Name, ...
@@ -401,9 +318,5 @@ function SaveBrainstormEvents(sFile, outputFile, eventNamePrefix)
     end
 
     save(bst_fullfile(sFile.Parent, outputFile),'events');
-end
-
-function prefix = GetSpikesEventPrefix()
-    prefix = 'Spikes Channel';
 end
 
