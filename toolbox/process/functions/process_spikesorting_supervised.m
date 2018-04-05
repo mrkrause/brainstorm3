@@ -43,12 +43,6 @@ function sProcess = GetDescription() %#ok<DEFNU>
     sProcess.nInputs     = 1;
     sProcess.nMinFiles   = 1;
     sProcess.isSeparator = 1;
-    % === Spike Sorter
-    sProcess.options.label1.Comment = '<U><B>Spike Sorter</B></U>:';
-    sProcess.options.label1.Type    = 'label';
-    sProcess.options.spikesorter.Comment = {'WaveClus'};
-    sProcess.options.spikesorter.Type    = 'radio';
-    sProcess.options.spikesorter.Value   = 1;
 end
 
 
@@ -63,32 +57,6 @@ function OutputFiles = Run(sProcess, sInputs) %#ok<DEFNU>
     global GlobalData;
     OutputFiles = {};
     ProtocolInfo = bst_get('ProtocolInfo');
-    spikeSorter = sProcess.options.spikesorter.Comment{sProcess.options.spikesorter.Value};
-    
-    switch lower(spikeSorter)
-        case 'waveclus'
-            % Ensure we are including the WaveClus folder in the Matlab path
-            waveclusDir = bst_fullfile(bst_get('BrainstormUserDir'), 'waveclus');
-            if exist(waveclusDir, 'file')
-                addpath(genpath(waveclusDir));
-            end
-
-            % Install WaveClus if missing
-            if ~exist('wave_clus_font', 'file')
-                rmpath(genpath(waveclusDir));
-                isOk = java_dialog('confirm', ...
-                    ['The WaveClus spike-sorter is not installed on your computer.' 10 10 ...
-                         'Download and install the latest version?'], 'WaveClus');
-                if ~isOk
-                    bst_report('Error', sProcess, sInputs, 'This process requires the WaveClus spike-sorter.');
-                    return;
-                end
-                process_spikesorting_unsupervised('downloadAndInstallWaveClus');
-            end
-            
-        otherwise
-            bst_error('The chosen spike sorter is currently unsupported by Brainstorm.');
-    end
     
     % Compute on each raw input independently
     for i = 1:length(sInputs)
@@ -104,11 +72,49 @@ function OutputFiles = Run(sProcess, sInputs) %#ok<DEFNU>
                 'No spikes found. Make sure to run the unsupervised Spike Sorter first.');
             return;
         end
-        if ~isfield(DataMat, 'Device') || isempty(DataMat.Device) ...
-                || ~strcmpi(DataMat.Device, spikeSorter)
-            bst_report('Error', sProcess, sInput, ...
-                'This spike sorting structure is currently unsupported by Brainstorm.');
-            return;
+
+        switch lower(DataMat.Device)
+            case 'waveclus'
+                % Ensure we are including the WaveClus folder in the Matlab path
+                waveclusDir = bst_fullfile(bst_get('BrainstormUserDir'), 'waveclus');
+                if exist(waveclusDir, 'file')
+                    addpath(genpath(waveclusDir));
+                end
+
+                % Install WaveClus if missing
+                if ~exist('wave_clus_font', 'file')
+                    rmpath(genpath(waveclusDir));
+                    isOk = java_dialog('confirm', ...
+                        ['The WaveClus spike-sorter is not installed on your computer.' 10 10 ...
+                             'Download and install the latest version?'], 'WaveClus');
+                    if ~isOk
+                        bst_report('Error', sProcess, sInputs, 'This process requires the WaveClus spike-sorter.');
+                        return;
+                    end
+                    process_spikesorting_waveclus('downloadAndInstallWaveClus');
+                end
+
+            case 'ultramegasort2000'
+                % Ensure we are including the UltraMegaSort2000 folder in the Matlab path
+                UltraMegaSort2000Dir = bst_fullfile(bst_get('BrainstormUserDir'), 'UltraMegaSort2000');
+                if exist(UltraMegaSort2000Dir, 'file')
+                    addpath(genpath(UltraMegaSort2000Dir));
+                end
+
+                if ~exist('ss_default_params', 'file')
+                    rmpath(genpath(UltraMegaSort2000Dir));
+                    isOk = java_dialog('confirm', ...
+                        ['The UltraMegaSort2000 spike-sorter is not installed on your computer.' 10 10 ...
+                             'Download and install the latest version?'], 'UltraMegaSort2000');
+                    if ~isOk
+                        bst_report('Error', sProcess, sInputs, 'This process requires the UltraMegaSort2000 spike-sorter.');
+                        return;
+                    end
+                    process_spikesorting_ultramegasort2000('downloadAndInstallUltraMegaSort2000');
+                end
+
+            otherwise
+                bst_error('The chosen spike sorter is currently unsupported by Brainstorm.');
         end
         
         CloseFigure();
@@ -150,7 +156,11 @@ function OpenFigure()
             if ishandle(save_button)
                 save_button.Visible = 'off';
             end
-            
+
+        case 'ultramegasort2000'
+            DataMat = load(electrodeFile, 'spikes');
+            GlobalData.SpikeSorting.Fig = figure('Units', 'Normalized');
+            splitmerge_tool(DataMat.spikes, 'all', GlobalData.SpikeSorting.Fig);
         otherwise
             bst_error('This spike sorting structure is currently unsupported by Brainstorm.');
     end
@@ -196,6 +206,11 @@ function LoadElectrode()
             if ishandle(name_text)
                 name_text.String = panel_spikes('GetSpikeName', GlobalData.SpikeSorting.Selected); 
             end
+
+        case 'ultramegasort2000'
+            DataMat = load(electrodeFile, 'spikes');
+            clf(GlobalData.SpikeSorting.Fig, 'reset');
+            splitmerge_tool(DataMat.spikes, 'all', GlobalData.SpikeSorting.Fig);
             
         otherwise
             bst_error('This spike sorting structure is currently unsupported by Brainstorm.');
@@ -220,6 +235,15 @@ function SaveElectrode()
             wave_clus('save_clusters_button_Callback', save_button, ...
                 [], guidata(GlobalData.SpikeSorting.Fig), 0);
 
+        case 'ultramegasort2000'
+            figdata = get(GlobalData.SpikeSorting.Fig, 'UserData');
+            spikes = figdata.spikes;
+            save(electrodeFile, 'spikes');
+            OutMat = struct();
+            OutMat.pathname = GlobalData.SpikeSorting.Data.Spikes(GlobalData.SpikeSorting.Selected).Path;
+            OutMat.filename = GlobalData.SpikeSorting.Data.Spikes(GlobalData.SpikeSorting.Selected).File;
+            set(figdata.sfb, 'UserData', OutMat);
+
         otherwise
             bst_error('This spike sorting structure is currently unsupported by Brainstorm.');
     end
@@ -229,12 +253,11 @@ function SaveElectrode()
     bst_save(GlobalData.SpikeSorting.Data.Name, GlobalData.SpikeSorting.Data, 'v6');
     
     % Add event to linked raw file    
-    process_spikesorting_unsupervised('CreateSpikeEvents', ...
-        GlobalData.SpikeSorting.Data.RawFile, ...
+    CreateSpikeEvents(GlobalData.SpikeSorting.Data.RawFile, ...
         GlobalData.SpikeSorting.Data.Device, ...
         electrodeFile, ...
         GlobalData.SpikeSorting.Data.Spikes(GlobalData.SpikeSorting.Selected).Name, ...
-        1)
+        1);
 end
 
 function nextElectrode = GetNextElectrode()
@@ -257,5 +280,106 @@ function nextElectrode = GetNextElectrode()
     if nextElectrode > numSpikes || isempty(GlobalData.SpikeSorting.Data.Spikes(nextElectrode).File)
         nextElectrode = GlobalData.SpikeSorting.Selected;
     end
+end
+
+function newEvents = CreateSpikeEvents(rawFile, deviceType, electrodeFile, electrodeName, import, eventNamePrefix)
+    if nargin < 6
+        eventNamePrefix = '';
+    else
+        eventNamePrefix = [eventNamePrefix ' '];
+    end
+    newEvents = struct();
+    DataMat = in_bst_data(rawFile);
+    eventName = [eventNamePrefix GetSpikesEventPrefix() ' ' electrodeName ' '];
+
+    % Load spike data and convert to Brainstorm event format
+    switch lower(deviceType)
+        case 'waveclus'
+            if exist(electrodeFile, 'file') == 2
+                ElecData = load(electrodeFile, 'cluster_class');
+                neurons = unique(ElecData.cluster_class(ElecData.cluster_class(:,1) > 0,1));
+                numNeurons = length(neurons);
+                tmpEvents = struct();
+                if numNeurons == 1
+                    tmpEvents(1).epochs = ones(1, sum(ElecData.cluster_class(:,1) ~= 0));
+                    tmpEvents(1).times = ElecData.cluster_class(ElecData.cluster_class(:,1) ~= 0, 2)' ./ 1000;
+                else
+                    for iNeuron = 1:numNeurons
+                        tmpEvents(iNeuron).epochs = ones(1, length(ElecData.cluster_class(ElecData.cluster_class(:,1) == iNeuron, 1)));
+                        tmpEvents(iNeuron).times = ElecData.cluster_class(ElecData.cluster_class(:,1) == iNeuron, 2)' ./ 1000;
+                    end
+                end
+            else
+                numNeurons = 0;
+            end
+
+        case 'ultramegasort2000'
+            ElecData = load(electrodeFile, 'spikes');
+            ElecData.spikes.spiketimes = double(ElecData.spikes.spiketimes);
+            numNeurons = size(ElecData.spikes.labels,1);
+            tmpEvents = struct();
+            if numNeurons == 1
+                tmpEvents(1).epochs = ones(1,length(ElecData.spikes.assigns));
+                tmpEvents(1).times = ElecData.spikes.spiketimes;
+            elseif numNeurons > 1
+                for iNeuron = 1:numNeurons
+                    tmpEvents(iNeuron).epochs = ones(1,length(ElecData.spikes.assigns(ElecData.spikes.assigns == ElecData.spikes.labels(iNeuron,1))));
+                    tmpEvents(iNeuron).times = ElecData.spikes.spiketimes(ElecData.spikes.assigns == ElecData.spikes.labels(iNeuron,1));
+                end
+            end
+            
+        otherwise
+            bst_error('This spike sorting structure is currently unsupported by Brainstorm.');
+    end
+    
+    if numNeurons == 1
+        newEvents(1).label      = eventName;
+        newEvents(1).color      = [rand(1,1), rand(1,1), rand(1,1)];
+        newEvents(1).epochs     = tmpEvents(1).epochs;
+        newEvents(1).times      = tmpEvents(1).times;
+        newEvents(1).samples    = newEvents(1).times .* DataMat.F.prop.sfreq;
+        newEvents(1).reactTimes = [];
+        newEvents(1).select     = 1;
+    elseif numNeurons > 1
+        for iNeuron = 1:numNeurons
+            newEvents(iNeuron).label      = [eventName '|' num2str(iNeuron) '|'];
+            newEvents(iNeuron).color      = [rand(1,1), rand(1,1), rand(1,1)];
+            newEvents(iNeuron).epochs     = tmpEvents(iNeuron).epochs;
+            newEvents(iNeuron).times      = tmpEvents(iNeuron).times;
+            newEvents(iNeuron).samples    = newEvents(iNeuron).times .* DataMat.F.prop.sfreq;
+            newEvents(iNeuron).reactTimes = [];
+            newEvents(iNeuron).select     = 1;
+        end
+    else
+        % This electrode just picked up noise, no event to add.
+        newEvents(1).label      = eventName;
+        newEvents(1).color      = [rand(1,1), rand(1,1), rand(1,1)];
+        newEvents(1).epochs     = [];
+        newEvents(1).times      = [];
+        newEvents(1).samples    = [];
+        newEvents(1).reactTimes = [];
+        newEvents(1).select     = 1;
+    end
+
+    if import
+        ProtocolInfo = bst_get('ProtocolInfo');
+        % Add event to linked raw file
+        numEvents = length(DataMat.F.events);
+        % Delete existing event(s)
+        if numEvents > 0
+            iDelEvents = cellfun(@(x) ~isempty(x), strfind({DataMat.F.events.label}, eventName));
+            DataMat.F.events = DataMat.F.events(~iDelEvents);
+            numEvents = length(DataMat.F.events);
+        end
+        % Add as new event(s);
+        for iEvent = 1:length(newEvents)
+            DataMat.F.events(numEvents + iEvent) = newEvents(iEvent);
+        end
+        bst_save(bst_fullfile(ProtocolInfo.STUDIES, rawFile), DataMat, 'v6');
+    end
+end
+
+function prefix = GetSpikesEventPrefix()
+    prefix = 'Spikes Channel';
 end
 
