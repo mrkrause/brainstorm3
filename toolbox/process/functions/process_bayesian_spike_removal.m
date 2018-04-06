@@ -42,7 +42,7 @@ function sProcess = GetDescription() %#ok<DEFNU>
     sProcess.Comment     = 'Bayesian Spike Removal';
     sProcess.Category    = 'Custom';
     sProcess.SubGroup    = 'Electrophysiology';
-    sProcess.Index       = 1201;
+    sProcess.Index       = 1401;
     sProcess.Description = 'https://www.ncbi.nlm.nih.gov/pubmed/21068271';
     % Definition of the input accepted by this process
     sProcess.InputTypes  = {'raw'};
