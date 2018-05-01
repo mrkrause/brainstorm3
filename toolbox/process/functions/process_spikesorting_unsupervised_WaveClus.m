@@ -144,37 +144,52 @@ function OutputFiles = Run(sProcess, sInputs) %#ok<DEFNU>
         
         ChannelMat = in_bst_channel(sInputs(i).ChannelFile);
         numChannels = length(ChannelMat.Channel);
-        sFiles = in_spikesorting_rawelectrodes(sInputs(i));
-        
+        sFiles = in_spikesorting_rawelectrodes(sInputs(i),sProcess.options.binsize.Value{1}(1)*1024*1024*1024,sProcess.options.paral.Value);
         
         %%%%%%%%%%%%%%%%%%%%% Prepare output folder %%%%%%%%%%%%%%%%%%%%%%        
         outputPath = bst_fullfile(ProtocolInfo.STUDIES, fPath, [fBase '_spikes']);
         
         % Clear if directory already exists
         if exist(outputPath, 'dir') == 7
-            rmdir(outputPath, 's');
+            try
+                rmdir(outputPath, 's');
+            catch
+                error('Couldnt remove spikes folder. Make sure the current directory is not that folder.')
+            end
         end
         mkdir(outputPath);
         
         %%%%%%%%%%%%%%%%%%%%%%% Start the spike sorting %%%%%%%%%%%%%%%%%%%
+        
+        % Get the channels that are for invasive electrophysiology
+        channelTypes = {ChannelMat.Channel.Type};
+        nSpikeChannels = strcmp(channelTypes,'EEG'); % Perform spike sorting only on the channels that are EEG (CONSIDER CHANGING THE ACQUISITION IMPORTERS TO iEEG)
+        
         if sProcess.options.paral.Value
             bst_progress('start', 'Spike-sorting', 'Extracting spikes...');
         else
-            bst_progress('start', 'Spike-sorting', 'Extracting spikes...', 0, numChannels);
+            bst_progress('start', 'Spike-sorting', 'Extracting spikes...', 0, nSpikeChannels);
         end
         
         % The Get_spikes saves the _spikes files at the current directory.
         previous_directory = pwd;
         cd(outputPath);
 
+        
+        
+        
         if sProcess.options.paral.Value  
             parfor ielectrode = 1:numChannels
-                Get_spikes(sFiles{ielectrode});
+                if strcmp(ChannelMat.Channel(ielectrode).Type,'EEG') % Perform spike sorting only on the channels that are EEG (CONSIDER CHANGING THE ACQUISITION IMPORTERS TO iEEG)
+                    Get_spikes(sFiles{ielectrode});
+                end
             end
         else
             for ielectrode = 1:numChannels
-                Get_spikes(sFiles{ielectrode});
-                bst_progress('inc', 1);
+                if strcmp(ChannelMat.Channel(ielectrode).Type,'EEG')
+                    Get_spikes(sFiles{ielectrode});
+                    bst_progress('inc', 1);
+                end
             end
         end
 
@@ -193,7 +208,7 @@ function OutputFiles = Run(sProcess, sInputs) %#ok<DEFNU>
             make_plots = false;
         end
         
-        % Do the clustering in parallel
+        % Do the clustering
         Do_clustering(1:numChannels, 'parallel', parallel, 'make_plots', make_plots);
         
         %%%%%%%%%%%%%%%%%%%%%  Create Brainstorm Events %%%%%%%%%%%%%%%%%%%
@@ -224,25 +239,23 @@ function OutputFiles = Run(sProcess, sInputs) %#ok<DEFNU>
         spikes = dir(bst_fullfile(outputPath, 'raw_elec*_spikes.mat'));
         spikes = sort_nat({spikes.name});
         
-        % Get channelID from the channels
-        channelIDs = zeros(1,length(spikes));
         
-        for iChannel = 1:length(spikes)
-            wordsInLabel         = strsplit(ChannelMat.Channel(iChannel).Name, ' '); % cell 1x2   (raw, 1)
-            channelIDs(iChannel) = str2double(wordsInLabel{2});
-        end
-
+        
+        % New channelNames - Without any special characters. Use this
+        % transformation throughout the toolbox for temp files
+        cleanChannelNames = cellfun(@(c)c(~ismember(c, ' .,?!-_@#$%^&*+*=()[]{}|/')), {ChannelMat.Channel.Name}, 'UniformOutput', 0)';
+        
+        
        
-        for iSpike = 1:length(channelIDs)
-            iChannel  = find(channelIDs == sscanf(spikes{iSpike}, 'raw_elec%d_spikes.mat'));  % The channelID is not equivalent to the channel index
-            
-            DataMat.Spikes(iSpike).Path = outputPath;
-            DataMat.Spikes(iSpike).File = ['times_raw_elec' num2str(iChannel) '.mat'];
-            if exist(bst_fullfile(outputPath, DataMat.Spikes(iSpike).File), 'file') ~= 2
-                DataMat.Spikes(iSpike).File = '';
+        for iChannel = 1:length(cleanChannelNames)
+            DataMat.Spikes(iChannel).Path = outputPath;
+            DataMat.Spikes(iChannel).File = ['times_raw_elec_' cleanChannelNames{iChannel} '.mat']; % times_raw_elec_* is the clustered output of the spike sorter
+            if exist(bst_fullfile(outputPath, DataMat.Spikes(iChannel).File), 'file') ~= 2
+                DataMat.Spikes(iChannel).File = '';
+                disp(['The threshold was not crossed for Channel: ' ChannelMat.Channel(iChannel).Name])
             end
-            DataMat.Spikes(iSpike).Name = ChannelMat.Channel(iChannel).Name;
-            DataMat.Spikes(iSpike).Mod  = 0;
+            DataMat.Spikes(iChannel).Name = ChannelMat.Channel(iChannel).Name;
+            DataMat.Spikes(iChannel).Mod  = 0;
 
         end
         % Save events file for backup
@@ -265,13 +278,13 @@ function OutputFiles = Run(sProcess, sInputs) %#ok<DEFNU>
     %%%%%%%%%%%%%%%%%%%%%%   Prepare to exit    %%%%%%%%%%%%%%%%%%%%%%%
     % Turn off parallel processing and return to the initial directory
 
-    if sProcess.options.paral.Value
-        if ~isempty(poolobj)
-            delete(poolobj);
-        end
-    end
+%     if sProcess.options.paral.Value
+%         if ~isempty(poolobj)
+%             delete(poolobj);
+%         end
+%     end
 
-    %cd(previous_directory)
+    cd(previous_directory)
     
     
 end
@@ -341,7 +354,7 @@ function newEvents = CreateSpikeEvents(rawFile, deviceType, electrodeFile, elect
 
             if numNeurons == 1
                 newEvents(1).label      = eventName;
-                newEvents(1).color      = [rand(1,1), rand(1,1), rand(1,1)];
+                newEvents(1).color      = rand(1,3);
                 newEvents(1).epochs     = ones(1, sum(ElecData.cluster_class(:,1) ~= 0));
                 newEvents(1).times      = ElecData.cluster_class(ElecData.cluster_class(:,1) ~= 0, 2)' ./ 1000;
                 newEvents(1).samples    = newEvents(1).times .* DataMat.F.prop.sfreq;
@@ -350,7 +363,7 @@ function newEvents = CreateSpikeEvents(rawFile, deviceType, electrodeFile, elect
             elseif numNeurons > 1
                 for iNeuron = 1:numNeurons
                     newEvents(iNeuron).label      = [eventName ' |' num2str(iNeuron) '|'];
-                    newEvents(iNeuron).color      = [rand(1,1), rand(1,1), rand(1,1)];
+                    newEvents(iNeuron).color      = rand(1,3);
                     newEvents(iNeuron).epochs     = ones(1, length(ElecData.cluster_class(ElecData.cluster_class(:,1) == iNeuron, 1)));
                     newEvents(iNeuron).times      = ElecData.cluster_class(ElecData.cluster_class(:,1) == iNeuron, 2)' ./ 1000;
                     newEvents(iNeuron).samples    = newEvents(iNeuron).times .* DataMat.F.prop.sfreq;
@@ -360,7 +373,7 @@ function newEvents = CreateSpikeEvents(rawFile, deviceType, electrodeFile, elect
             else
                 % This electrode just picked up noise, no event to add.
                 newEvents(1).label      = eventName;
-                newEvents(1).color      = [rand(1,1), rand(1,1), rand(1,1)];
+                newEvents(1).color      = rand(1,3);
                 newEvents(1).epochs     = [];
                 newEvents(1).times      = [];
                 newEvents(1).samples    = [];

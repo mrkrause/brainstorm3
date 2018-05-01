@@ -296,7 +296,7 @@ function convert2BrainstormEvents(sFile, parentPath, ChannelMat)
 
                 % Write the packet to events
                 events(index).label       = ['Spikes Channel ' num2str(ielectrode)];
-                events(index).color       = [rand(1,1),rand(1,1),rand(1,1)];
+                events(index).color       = rand(1,3);
                 events(index).epochs      = ones(1,length(spikes.assigns));   % There is no noise automatic assignment on UltraMegaSorter2000. Everything is assigned to neurons
                 events(index).times       = spikes.spiketimes; % The timestamps are in seconds
                 events(index).samples     = events(index).times.*sFile.prop.sfreq;
@@ -309,7 +309,7 @@ function convert2BrainstormEvents(sFile, parentPath, ChannelMat)
                     index = index+1;
                     events(index).label = ['Spikes Channel ' num2str(ielectrode) ' |' num2str(ineuron) '|'];
 
-                    events(index).color       = [rand(1,1),rand(1,1),rand(1,1)];
+                    events(index).color       = rand(1,3);
                     events(index).epochs      = ones(1,length(spikes.assigns(spikes.assigns==spikes.labels(ineuron,1))));
                     events(index).times       = spikes.spiketimes(spikes.assigns==spikes.labels(ineuron,1)); % The timestamps are in seconds
                     events(index).samples     = events(index).times.*sFile.prop.sfreq;

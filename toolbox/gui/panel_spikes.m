@@ -168,9 +168,9 @@ end
 
 function spikeName = GetSpikeName(i)
     global GlobalData;
-    wordsInLabel = strsplit(GlobalData.SpikeSorting.Data.Spikes(i).Name, ' ');
-    wordsInLabel{2}= str2double(wordsInLabel{2}); % This conversion to double and then back to string gets rid of the squares-bug that appeared on the labels
-    spikeName = ['Channel ' wordsInLabel{1} ' ' num2str(wordsInLabel{2})];
+%     wordsInLabel = strsplit(GlobalData.SpikeSorting.Data.Spikes(i).Name, ' ');
+%     wordsInLabel{2}= str2double(wordsInLabel{2}); % This conversion to double and then back to string gets rid of the squares-bug that appeared on the labels
+    spikeName = ['Channel ' GlobalData.SpikeSorting.Data.Spikes(i).Name];
     
     if GlobalData.SpikeSorting.Data.Spikes(i).Mod
         spikeName = [spikeName ' *'];

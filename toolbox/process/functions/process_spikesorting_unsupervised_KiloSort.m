@@ -111,7 +111,19 @@ function OutputFiles = Run(sProcess, sInputs) %#ok<DEFNU>
     end
     
     
-    
+    %% Prepare parallel pool, if requested
+    if sProcess.options.paral.Value
+        try
+            poolobj = gcp('nocreate');
+            if isempty(poolobj)
+                parpool;
+            end
+        catch
+            sProcess.options.paral.Value = 0;
+        end
+    else
+        poolobj = [];
+    end
     
     %% Initialize KiloSort Parameters (This is a copy of StandardConfig_MOVEME)
     
@@ -226,13 +238,16 @@ function OutputFiles = Run(sProcess, sInputs) %#ok<DEFNU>
         %% %%%%%%%%%%%%%%%%%%% Prepare output folder %%%%%%%%%%%%%%%%%%%%%%        
         outputPath = bst_fullfile(ProtocolInfo.STUDIES, fPath, [fBase '_spikes']);
         
-        % Clear if directory already exists        
+        % Clear if directory already exists
         if exist(outputPath, 'dir') == 7
-            rmdir(outputPath, 's');
+            try
+                rmdir(outputPath, 's');
+            catch
+                error('Couldnt remove spikes folder. Make sure the current directory is not that folder.')
+            end
         end
+        
         mkdir(outputPath);
-        
-        
         
         %% Prepare the ChannelMat File
         % This is a file that just contains information for the location of
@@ -334,7 +349,7 @@ function OutputFiles = Run(sProcess, sInputs) %#ok<DEFNU>
         %% %%%%%%%%%%%%%%%%%%%  Create Brainstorm Events %%%%%%%%%%%%%%%%%%%
         
         bst_progress('text', 'Saving events file...');
-        convert2BrainstormEvents(sFile, bst_fullfile(ProtocolInfo.STUDIES, fPath), rez);
+        convertKilosort2BrainstormEvents(sFile, ChannelMat, bst_fullfile(ProtocolInfo.STUDIES, fPath), rez);
         
         cd(previous_directory);
         
@@ -380,7 +395,7 @@ end
 
 
 
-function convert2BrainstormEvents(sFile, parentPath, rez)
+function convertKilosort2BrainstormEvents(sFile, ChannelMat, parentPath, rez)
 
     events = struct;
     events(2).label = [];
@@ -395,21 +410,49 @@ function convert2BrainstormEvents(sFile, parentPath, rez)
     
     
     
+    %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+    THIS IS NOT COMPLETE
+    TRANFORM REZ TO EVENTS
     
     
-    for ielectrode = 1:length(rez.xc) % sFile.header.ChannelID'
-        
-        
-        
-        try       
+    
+    
+%     st: first column is the spike time in samples, 
+%         second column is the spike template, 
+%         third column is the extracted amplitude, 
+%     and fifth column is the post auto-merge cluster (if you run the auto-merger).
+    spikeTimes = rez.st3(:,1);     % 10 spikes - TIMESTAMPS
+    spikeTemplates = rez.st3(:,2); % 10 spikes - TEMPLATE THEY MUCH WITH
+
+    templates = zeros(length(ChannelMat.Channel), size(rez.W,1), rez.ops.Nfilt, 'single');
+    for iNN = 1:rez.ops.Nfilt
+        templates(:,:,iNN) = squeeze(rez.U(:,iNN,:)) * squeeze(rez.W(:,iNN,:))';
+    end
+    amplitude_max_channel = [];
+    for i = 1:size(templates,3)
+        [~,amplitude_max_channel(i)] = max(range(templates(:,:,i)')); %CHANNEL WHERE EACH TEMPLATE HAS THE BIGGEST AMPLITUDE
+    end
+    
+    
+    % I assign each spike on the channel that it has the highest amplitude for the template it was matched with
+    amplitude_max_channel = amplitude_max_channel';
+    spike2ChannelAssignment = amplitude_max_channel(spikeTemplates);
+    %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+    
+    
+    
+    
+    
+    
+    for iElectrode = 1:length(ChannelMat.Channel)
+        if ChannelMat.Channel(iElectrode) == 'EEG'
             nNeurons = size(spikes.labels,1); % This gives the number of neurons that are picked up on that electrode
             if nNeurons==1
                 index = index+1;
-
                 % Write the packet to events
-                events(index).label       = ['Spikes Electrode ' num2str(sFile.header.ChannelID(ielectrode))];
-                events(index).color       = [rand(1,1),rand(1,1),rand(1,1)];
-                events(index).epochs      = ones(1,length(spikes.assigns));   % There is no noise automatic assignment on UltraMegaSorter2000. Everything is assigned to neurons
+                events(index).label       = ['Spikes Channel ' ChannelMat.Channel(iElectrode).Name];
+                events(index).color       = rand(1,3);
+                events(index).epochs      = ones(1,length(spikes.assigns));
                 events(index).times       = spikes.spiketimes; % The timestamps are in seconds
                 events(index).samples     = events(index).times.*sFile.prop.sfreq;
                 events(index).reactTimes  = [];
@@ -419,7 +462,7 @@ function convert2BrainstormEvents(sFile, parentPath, rez)
                 for ineuron = 1:nNeurons
                     % Write the packet to events
                     index = index+1;
-                    events(index).label = ['Spikes Electrode ' num2str(sFile.header.ChannelID(ielectrode)) ' |' num2str(ineuron) '|'];
+                    events(index).label = ['Spikes Channel ' ChannelMat.Channel(iElectrode).Name ' |' num2str(ineuron) '|'];
 
                     events(index).color       = [rand(1,1),rand(1,1),rand(1,1)];
                     events(index).epochs      = ones(1,length(spikes.assigns(spikes.assigns==spikes.labels(ineuron,1))));
@@ -429,12 +472,9 @@ function convert2BrainstormEvents(sFile, parentPath, rez)
                     events(index).select      = 1;
                 end
             elseif nNeurons == 0
-                disp(['Electrode: ' num2str(sFile.header.ChannelID(ielectrode)) ' just picked up noise'])
+                disp(['Channel: ' num2str(sFile.header.ChannelID(iElectrode)) ' just picked up noise'])
                 continue % This electrode just picked up noise
             end
-            
-        catch
-            disp(['Electrode: ' num2str(sFile.header.ChannelID(ielectrode)) ' had no clustered spikes'])
         end
     end
 
