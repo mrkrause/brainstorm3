@@ -159,14 +159,23 @@ function OpenFigure()
 
         case 'ultramegasort2000'
             DataMat = load(electrodeFile, 'spikes');
-            GlobalData.SpikeSorting.Fig = figure('Units', 'Normalized');
-            splitmerge_tool(DataMat.spikes, 'all', GlobalData.SpikeSorting.Fig);
+            GlobalData.SpikeSorting.Fig = figure('Units', 'Normalized', 'Position', ...
+                DataMat.spikes.params.display.default_figure_size);
+            % Just open figure, rest of the code in LoadElectrode()
         otherwise
             bst_error('This spike sorting structure is currently unsupported by Brainstorm.');
     end
     
     panel_spikes('UpdatePanel');
     LoadElectrode();
+    
+    % Close Spike panel when you close the figure
+    function my_closereq(src, callbackdata)
+        delete(src);
+        panel_spikes('UpdatePanel');
+    end
+    GlobalData.SpikeSorting.Fig.CloseRequestFcn = @my_closereq;
+    
     bst_progress('stop');
 end
 
@@ -208,9 +217,24 @@ function LoadElectrode()
             end
 
         case 'ultramegasort2000'
+            % Reload figure altogether, same behavior as builtin load...
             DataMat = load(electrodeFile, 'spikes');
             clf(GlobalData.SpikeSorting.Fig, 'reset');
             splitmerge_tool(DataMat.spikes, 'all', GlobalData.SpikeSorting.Fig);
+            
+            % Some UMS2k visual hacks
+            save_button = findall(GlobalData.SpikeSorting.Fig, 'Tag', 'saveButton');
+            if ishandle(save_button)
+                save_button.Visible = 'off';
+            end
+            save_button = findall(GlobalData.SpikeSorting.Fig, 'Tag', 'saveFileButton');
+            if ishandle(save_button)
+                save_button.Visible = 'off';
+            end
+            load_button = findall(GlobalData.SpikeSorting.Fig, 'Tag', 'loadFileButton');
+            if ishandle(load_button)
+                load_button.Visible = 'off';
+            end
             
         otherwise
             bst_error('This spike sorting structure is currently unsupported by Brainstorm.');
@@ -231,9 +255,14 @@ function SaveElectrode()
     % Save through Spike Sorting software
     switch lower(GlobalData.SpikeSorting.Data.Device)
         case 'waveclus'
+            % WaveClus takes a screenshot of the figure when saving, which
+            % is pretty slow. If we change the figure tag it skips this.
             save_button = findall(GlobalData.SpikeSorting.Fig, 'Tag', 'save_clusters_button');
+            fig_tag = GlobalData.SpikeSorting.Fig.Tag;
+            GlobalData.SpikeSorting.Fig.Tag = 'wave_clus_tmp';
             wave_clus('save_clusters_button_Callback', save_button, ...
                 [], guidata(GlobalData.SpikeSorting.Fig), 0);
+            GlobalData.SpikeSorting.Fig.Tag = fig_tag;
 
         case 'ultramegasort2000'
             figdata = get(GlobalData.SpikeSorting.Fig, 'UserData');
@@ -383,3 +412,46 @@ function prefix = GetSpikesEventPrefix()
     prefix = 'Spikes Channel';
 end
 
+function isSpikeEvent = IsSpikeEvent(eventLabel)
+    prefix = GetSpikesEventPrefix();
+    isSpikeEvent = strncmp(eventLabel, prefix, length(prefix));
+end
+
+function neuron = GetNeuronOfSpikeEvent(eventLabel)
+    markers = strfind(eventLabel, '|');
+    if length(markers) > 1
+        neuron = str2num(eventLabel(markers(end-1)+1:markers(end)-1));
+    else
+        neuron = [];
+    end
+end
+
+function channel = GetChannelOfSpikeEvent(eventLabel)
+    eventLabel = strtrim(eventLabel);
+    prefix = GetSpikesEventPrefix();
+    neuron = GetNeuronOfSpikeEvent(eventLabel);
+    bounds = [length(prefix) + 2, 0]; % 'Spikes Channel '
+    
+    if ~isempty(neuron)
+        bounds(2) = length(num2str(neuron)) + 3; % ' |31|'
+    end
+    
+    try
+        channel = eventLabel(bounds(1):end-bounds(2));
+    catch
+        channel = [];
+    end
+end
+
+function isFirst = IsFirstNeuron(eventLabel, onlyIsFirst)
+    % onlyIsFirst = We assume a channel with a single neuron counts as a first neuron.
+    if nargin < 2
+        onlyIsFirst = 1;
+    end
+    
+    neuron = GetNeuronOfSpikeEvent(eventLabel);
+    isFirst = neuron == 1;
+    if onlyIsFirst && isempty(neuron)
+        isFirst = 1;
+    end
+end
