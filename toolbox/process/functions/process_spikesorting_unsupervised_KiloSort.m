@@ -216,19 +216,11 @@ function OutputFiles = Run(sProcess, sInputs) %#ok<DEFNU>
         ChannelMat = in_bst_channel(sInputs(i).ChannelFile);
         
         
-        
-        
-        %%%%%%%%%%%%%%%%%%%%%%%%%%% MARTIN %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-        
-        %%%%%%numChannels = length(ChannelMat.Channel);  % THIS WILL FAIL IF THE RECORDING SYSTEM HAS EXTRA CHANNEL TYPES (EOG - Photodiode etc.)
-
-        %Correct for other spike sorters as well
-        %Do:
-        %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+        %% Make sure we perform the spike sorting on the channels that have spikes. IS THIS REALLY NECESSARY? it would just take longer
 
         numChannels = 0;
         for iChannel = 1:length(ChannelMat.Channel)
-           if ChannelMat.Channel(iChannel).Type == 'EEG'
+           if strcmp(ChannelMat.Channel(iChannel).Type,'EEG') || strcmp(ChannelMat.Channel(iChannel).Type,'SEEG')
               numChannels = numChannels + 1;               
            end
         end
@@ -236,7 +228,7 @@ function OutputFiles = Run(sProcess, sInputs) %#ok<DEFNU>
         sFile = DataMat.F;
                
         %% %%%%%%%%%%%%%%%%%%% Prepare output folder %%%%%%%%%%%%%%%%%%%%%%        
-        outputPath = bst_fullfile(ProtocolInfo.STUDIES, fPath, [fBase '_spikes']);
+        outputPath = bst_fullfile(ProtocolInfo.STUDIES, fPath, [fBase '_kilosort_spikes']);
         
         % Clear if directory already exists
         if exist(outputPath, 'dir') == 7
@@ -265,44 +257,125 @@ function OutputFiles = Run(sProcess, sInputs) %#ok<DEFNU>
         chanMap0ind = chanMap - 1;
 
         
-        xcoords = [];
-        ycoords = [];
-        for iChannel = 1:length(ChannelMat.Channel)
-           if ChannelMat.Channel(iChannel).Type == 'EEG'
-              temp = ChannelMat.Channel(iChannel).Loc;
-              xcoords = [xcoords ; temp(1)];
-              ycoords = [ycoords ; temp(2)];
-           end
-        end
-        clear temp
         
-        kcoords   = ones(Nchannels,1); % grouping of channels (i.e. tetrode groups)
+        %% Use the same algorithm that I use for the 2d channel display
+        %  This assumes that the users have already assigned the channel
+        %  coordinates and the channel Montages
+        
+        Channels = ChannelMat.Channel; % 1x224
+
+        channelsMontage = zeros(length(Channels),1); % This holds the code of the montage each channel holds 
+        channelsCoords  = zeros(length(Channels),3); % THE 3D COORDINATES
+        Montages = unique({Channels.Group});
+
+        for iChannel = 1:length(Channels)
+            for iMontage = 1:length(Montages)
+                if strcmp(Channels(iChannel).Group, Montages{iMontage})
+                    channelsMontage(iChannel)    = iMontage;
+                    channelsCoords(iChannel,1:3) = Channels(iChannel).Loc;
+                end
+            end
+        end
+
+        % APPLY TRANSORMATION TO A FLAT SURFACE (X-Y COORDINATES: IGNORE Z)
+        converted_coordinates = zeros(length(Channels),3);
+        for iMontage = 1:length(Montages)
+            clear single_array_coords
+            single_array_coords = channelsCoords(channelsMontage==iMontage,:);
+
+            % PCA approach
+%                 [coeff,score,latent,tsquared,explained] = pca(single_array_coords - mean(single_array_coords));
+%                 converted_coordinates(channelsMontage==iMontage,:) = score*coeff' + mean(single_array_coords);
+
+            % SVD approach
+            [U, S, V] = svd(single_array_coords-mean(single_array_coords));
+            lower_rank = 2;% Get only the first two components
+            converted_coordinates(channelsMontage==iMontage,:)=U(:,1:lower_rank)*S(1:lower_rank,1:lower_rank)*V(:,1:lower_rank)'+mean(single_array_coords);
+        end
+
+        xcoords = converted_coordinates(:,1); 
+        ycoords = converted_coordinates(:,2);
+        
+        
+        kcoords   = channelsMontage; % grouping of channels (i.e. tetrode groups)
         fs = sFile.prop.sfreq; % sampling frequency
 
         
-        
-        
-        %%%%%%%%%%%%%  WE HAVE TO FIGURE OUT A SOLUTION FOR THIS %%%%%%%%%%
-        
-        % The datafile I'm using doesnt provide the locations of the
-        % electrodes (everything is 0). I create random positions for just
-        % making the spikesorter work. Delete these lines until the save
-        % after corrections
-        xcoords   = repmat([1 2 3 4]', 1, Nchannels/4);
-        xcoords   = xcoords(:);
-        ycoords   = repmat(1:Nchannels/4, 4, 1);
-        ycoords   = ycoords(:);
-        kcoords   = ones(Nchannels,1); % grouping of channels (i.e. tetrode groups)
-        %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% % %         %%%%%%%%%%%%%  WE HAVE TO FIGURE OUT A SOLUTION FOR THIS %%%%%%%%%%
+% % %         
+% % %         % The datafile I'm using doesnt provide the locations of the
+% % %         % electrodes (everything is 0). I create random positions for just
+% % %         % making the spikesorter work. Delete these lines until the save
+% % %         % after corrections
+% % %         xcoords   = repmat([1 2 3 4]', 1, Nchannels/4);
+% % %         xcoords   = xcoords(:);
+% % %         ycoords   = repmat(1:Nchannels/4, 4, 1);
+% % %         ycoords   = ycoords(:);
+% % %         kcoords   = ones(Nchannels,1); % grouping of channels (i.e. tetrode groups)
+% % %         %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
         save([outputPath '\chanMap.mat'], ...
             'chanMap','connected', 'xcoords', 'ycoords', 'kcoords', 'chanMap0ind', 'fs')
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        %% Kilosort outputs a rez.mat file. The supervised part (Klusters) gets as input the rez file, and a .xml file (with parameters).
+        % I can create this .xml file from an excel file according to what
+        % the Buzsaki lab uses.
+        %  The buzsaki lab has a converter for "intan" files. Using this:
+        
+        % Create .xml file (Compatible with Buzsaki lab inputs)
+        xml_filename = bst_fullfile(outputPath, [fBase '.xlsx']);
+
+        A1 = {'SEE DERIVATION BELOW','','','','','X','Y','','BY VERTICAL POSITION/SHANK (IE FOR DISPLAY)','','','Neuroscope Channel';
+              'Neronexus/ Omnetics site','Intan pin','Intan Channel','','','X Coordinates','Y Coordinates','','','Neuronexus/ Omnetics Site','Intan Pin','Intan Channel'};
+%               'Neronexus/ Omnetics site',[DataMat.F.device ' pin'],[DataMat.F.device ' Channel'],'','','X Coordinates','Y Coordinates','','','Neuronexus/ Omnetics Site',[DataMat.F.device ' Pin'],[DataMat.F.device ' Channel']};
+        
+        for iChannel = 1:length(kcoords)
+            A3{iChannel,1}  = iChannel;
+            A3{iChannel,2}  = iChannel-1; % Acquisition system codename - INTAN STARTS CHANNEL NUMBERING FROM 0
+            A3{iChannel,3}  = iChannel-1;
+            A3{iChannel,4}  = ['SHANK ' num2str(kcoords(iChannel))];
+            A3{iChannel,5}  = '';
+            A3{iChannel,6}  = xcoords(iChannel); % x coord - THIS PROBABLY SHOULD BE RELATIVE TO EACH ARRAY - NOT GLOBAL COORDINATES
+            A3{iChannel,7}  = ycoords(iChannel);
+            A3{iChannel,8}  = '';
+            A3{iChannel,9}  = ['SHANK ' num2str(kcoords(iChannel))];
+            A3{iChannel,10} = iChannel; % This is for the display - Neuronexus/Omnetics Site
+            A3{iChannel,11} = iChannel-1; % This is for the display - Intan Pin
+            A3{iChannel,12} = iChannel-1; % This is for the display - Intan Channel
+        end
+        
+        sheet = 1;
+        xlswrite(xml_filename,A1,sheet,'A1')
+        xlswrite(xml_filename,A3,sheet,'A3')
+        
+        
+        previous_directory = pwd;
+        cd(outputPath);
+        
+        
+        [~, xmlFileBase] = bst_fileparts(xml_filename);
+        bz_MakeXMLFromProbeMaps(xmlFileBase) % This creates a Barcode_f096_kilosort_spikes.xml
+        weird_xml_filename = dir('*.xml');
+        [~, weird_xml_fileBase] = bst_fileparts(weird_xml_filename.name);
+        movefile([weird_xml_fileBase '.xml'],[xmlFileBase '.xml']); % Barcode_f096.xml
+        
+        
+        
         
         %% Convert to the right input for KiloSort
         
         bst_progress('start', 'KiloSort spike-sorting', 'Converting to KiloSort Input...');
         
-        converted_raw_File = in_spikesorting_convertForKiloSort(sInputs(i), sProcess); % This converts into int16. Confirm that it's the only precision acceptable
+        converted_raw_File = in_spikesorting_convertForKiloSort(sInputs(i), sProcess); % This converts into int16.
         
         %%%%%%%%%%%%%%%%%%%%%%% Start the spike sorting %%%%%%%%%%%%%%%%%%%
         bst_progress('text', 'Spike-sorting...');
@@ -313,13 +386,10 @@ function OutputFiles = Run(sProcess, sInputs) %#ok<DEFNU>
         ops.fproc   = [outputPath '\temp_wh.bin']; % residual from RAM of preprocessed data		% It was .dat, I changed it to .bin - Make sure this is correct
         ops.chanMap = [outputPath '\chanMap.mat']; % make this file using createChannelMapFile.m		
         ops.root    = outputPath; % 'openEphys' only: where raw files are
-
+        ops.basename = xmlFileBase;
         
         
         %% KiloSort
-        
-        previous_directory = pwd;
-        cd(outputPath);
         
         if ops.GPU     
             gpuDevice(1); % initialize GPU (will erase any existing GPU arrays)
@@ -342,8 +412,6 @@ function OutputFiles = Run(sProcess, sInputs) %#ok<DEFNU>
         % remove temporary file
         delete(ops.fproc);
 
-        
-        
         
         
         %% %%%%%%%%%%%%%%%%%%%  Create Brainstorm Events %%%%%%%%%%%%%%%%%%%
@@ -410,10 +478,10 @@ function convertKilosort2BrainstormEvents(sFile, ChannelMat, parentPath, rez)
     
     
     
-    %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-    THIS IS NOT COMPLETE
-    TRANFORM REZ TO EVENTS
-    
+% % %     %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% % %     THIS IS NOT COMPLETE
+% % %     TRANFORM REZ TO EVENTS
+% % %     
     
     
     
