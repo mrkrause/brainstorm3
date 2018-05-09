@@ -143,7 +143,7 @@ function OutputFiles = Run(sProcess, sInputs) %#ok<DEFNU>
             try
                 rmdir(outputPath, 's');
             catch
-                continue
+                error('Couldnt remove spikes folder. Make sure the current directory is not that folder.')
             end
         end
         mkdir(outputPath);
@@ -167,11 +167,11 @@ function OutputFiles = Run(sProcess, sInputs) %#ok<DEFNU>
 
         if sProcess.options.paral.Value  
             parfor ielectrode = 1:numChannels
-                do_UltraMegaSorting(A,B,sFiles,ielectrode,sFile)
+                do_UltraMegaSorting(A,B,sFiles{ielectrode},sFile) % sFile is for .ns5, sFiles are the filenames of the separated electrodes on the tmp folder
             end
         else
             for ielectrode = 1:numChannels
-                do_UltraMegaSorting(A,B,sFiles,ielectrode,sFile)
+                do_UltraMegaSorting(A,B,sFiles{ielectrode},sFile)
             end
         end
 
@@ -196,7 +196,7 @@ function OutputFiles = Run(sProcess, sInputs) %#ok<DEFNU>
             NewBstFile = [NewBstFilePrefix '_' num2str(iFile) '.mat'];
             commentSuffix = [' (' num2str(iFile) ')'];
         end
-        spikeSorter = sProcess.options.spikesorter.Comment;
+        spikeSorter = sProcess.options.spikesorter.Comment{1};
         
         % Build output structure
         DataMat = struct();
@@ -240,12 +240,12 @@ end
 
 
 
-function do_UltraMegaSorting(A,B,sFiles,ielectrode,sFile)
+function do_UltraMegaSorting(A,B,sFile_single_electrode,sFile)
+        
+    [~, fBase] = bst_fileparts(sFile_single_electrode);
+    channel_label = erase(fBase,'raw_elec_');
     
-    single_electrode_filename = sFiles{ielectrode};
-    electrodeID = sFile.header.ChannelID(ielectrode);
-
-    load(single_electrode_filename)
+    load(sFile_single_electrode)
     filtered_data_temp = filtfilt( B, A, data); % runs filter
     filtered_data = cell(1,1);
     filtered_data{1} = filtered_data_temp; %should be a column vector clear filter
@@ -258,7 +258,7 @@ function do_UltraMegaSorting(A,B,sFiles,ielectrode,sFile)
     spikes = ss_energy(spikes);
     spikes = ss_aggregate(spikes);
     
-    save(['times_raw_elec' num2str(electrodeID) '.mat'], 'spikes')
+    save(['times_raw_elec_' channel_label '.mat'], 'spikes')
     
     
     
@@ -283,10 +283,19 @@ function convert2BrainstormEvents(sFile, parentPath, ChannelMat)
     events(2).reactTimes = [];
     events(2).select = [];
     index = 0;
-    for ielectrode = sFile.header.ChannelID'
+    
+    
+    
+    % New channelNames - Without any special characters. Use this
+    % transformation throughout the toolbox for temp files
+    cleanChannelNames = cellfun(@(c)c(~ismember(c, ' .,?!-_@#$%^&*+*=()[]{}|/')), {ChannelMat.Channel.Name}, 'UniformOutput', 0)';
+        
+    
+    
+    for ielectrode = 1:length(cleanChannelNames)
         
         try
-            load(['times_raw_elec' num2str(ielectrode) '.mat'],'spikes') % This will fail if the electrode picked up less than 16 spikes. Consider putting a try-catch block
+            load(['times_raw_elec_' cleanChannelNames{ielectrode} '.mat'],'spikes') % This will fail if the electrode picked up less than 16 spikes. Consider putting a try-catch block
 
             spikes.spiketimes = double(spikes.spiketimes);
        
@@ -295,7 +304,7 @@ function convert2BrainstormEvents(sFile, parentPath, ChannelMat)
                 index = index+1;
 
                 % Write the packet to events
-                events(index).label       = ['Spikes Channel ' num2str(ielectrode)];
+                events(index).label       = ['Spikes Channel ' ChannelMat.Channel(ielectrode).Name];
                 events(index).color       = rand(1,3);
                 events(index).epochs      = ones(1,length(spikes.assigns));   % There is no noise automatic assignment on UltraMegaSorter2000. Everything is assigned to neurons
                 events(index).times       = spikes.spiketimes; % The timestamps are in seconds
@@ -307,7 +316,7 @@ function convert2BrainstormEvents(sFile, parentPath, ChannelMat)
                 for ineuron = 1:nNeurons
                     % Write the packet to events
                     index = index+1;
-                    events(index).label = ['Spikes Channel ' num2str(ielectrode) ' |' num2str(ineuron) '|'];
+                    events(index).label = ['Spikes Channel ' ChannelMat.Channel(ielectrode).Name ' |' num2str(ineuron) '|'];
 
                     events(index).color       = rand(1,3);
                     events(index).epochs      = ones(1,length(spikes.assigns(spikes.assigns==spikes.labels(ineuron,1))));
@@ -317,12 +326,12 @@ function convert2BrainstormEvents(sFile, parentPath, ChannelMat)
                     events(index).select      = 1;
                 end
             elseif nNeurons == 0
-                disp(['Electrode: ' num2str(ielectrode) ' just picked up noise'])
+                disp(['Channel: ' ChannelMat.Channel(ielectrode).Name ' just picked up noise'])
                 continue % This electrode just picked up noise
             end
             
         catch
-            disp(['Electrode: ' num2str(ielectrode) ' had no clustered spikes'])
+            disp(['Channel: ' ChannelMat.Channel(ielectrode).Name ' had no clustered spikes'])
         end
     end
 
