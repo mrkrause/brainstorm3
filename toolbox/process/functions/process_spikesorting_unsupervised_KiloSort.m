@@ -338,9 +338,9 @@ function OutputFiles = Run(sProcess, sInputs) %#ok<DEFNU>
               'Neronexus/ Omnetics site','Intan pin','Intan Channel','','','X Coordinates','Y Coordinates','','','Neuronexus/ Omnetics Site','Intan Pin','Intan Channel'};
 %               'Neronexus/ Omnetics site',[DataMat.F.device ' pin'],[DataMat.F.device ' Channel'],'','','X Coordinates','Y Coordinates','','','Neuronexus/ Omnetics Site',[DataMat.F.device ' Pin'],[DataMat.F.device ' Channel']};
         
-        for iChannel = 1:length(kcoords)
+        for iChannel = 1:length(kcoords) % 1x224
             A3{iChannel,1}  = iChannel;
-            A3{iChannel,2}  = iChannel-1; % Acquisition system codename - INTAN STARTS CHANNEL NUMBERING FROM 0
+            A3{iChannel,2}  = iChannel-1; % Acquisition system codename - INTAN STARTS CHANNEL NUMBERING FROM 0. These .xlsx are made for INTAN I assume
             A3{iChannel,3}  = iChannel-1;
             A3{iChannel,4}  = ['SHANK ' num2str(kcoords(iChannel))];
             A3{iChannel,5}  = '';
@@ -362,8 +362,21 @@ function OutputFiles = Run(sProcess, sInputs) %#ok<DEFNU>
         cd(outputPath);
         
         
+        % Some defaults values I found in bz.MakeXMLFromProbeMaps
+        defaults.NumberOfChannels = length(kcoords);
+        defaults.SampleRate = fs;
+        defaults.BitsPerSample = 16;
+        defaults.VoltageRange = 20;
+        defaults.Amplification = 1000;
+        defaults.LfpSampleRate = 1250;
+        defaults.PointsPerWaveform = 32;
+        defaults.PeakPointInWaveform = 16;
+        defaults.FeaturesPerWave = 4;
+        
+        
         [~, xmlFileBase] = bst_fileparts(xml_filename);
-        bz_MakeXMLFromProbeMaps(xmlFileBase) % This creates a Barcode_f096_kilosort_spikes.xml
+        bz_MakeXMLFromProbeMaps({xmlFileBase}, '','',1,defaults) % This creates a Barcode_f096_kilosort_spikes.xml
+%         bz_MakeXMLFromProbeMaps({xmlFileBase}) % This creates a Barcode_f096_kilosort_spikes.xml
         weird_xml_filename = dir('*.xml');
         [~, weird_xml_fileBase] = bst_fileparts(weird_xml_filename.name);
         movefile([weird_xml_fileBase '.xml'],[xmlFileBase '.xml']); % Barcode_f096.xml
